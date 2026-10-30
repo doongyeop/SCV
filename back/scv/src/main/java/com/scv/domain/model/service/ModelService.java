@@ -82,7 +82,7 @@ public class ModelService {
     // 모델 버전 조회
     @Transactional(readOnly = true)
     public ModelDetailResponse getModelVersions(Long modelId) {
-        Model model = modelRepository.findById(modelId).orElseThrow(ModelNotFoundException::new);
+        Model model = modelRepository.findById(modelId).filter(m -> !m.isDeleted()).orElseThrow(ModelNotFoundException::new);
 
         return new ModelDetailResponse(model);
     }
@@ -90,9 +90,9 @@ public class ModelService {
 
     // 이름 수정
     public void updateModelName(Long modelId, String name, CustomOAuth2User user) throws BadRequestException {
-        Model model = modelRepository.findById(modelId).orElseThrow(ModelNotFoundException::new);
+        Model model = modelRepository.findById(modelId).filter(m -> !m.isDeleted()).orElseThrow(ModelNotFoundException::new);
 
-        if (user.getUserId().equals(model.getUser().getUserId())) {
+        if (!user.getUserId().equals(model.getUser().getUserId())) {
             throw new BadRequestException("자신의 모델만 수정할 수 있습니다.");
         }
 
@@ -104,7 +104,7 @@ public class ModelService {
 
     // 모델 삭제
     public void deleteModel(Long modelId, CustomOAuth2User user) throws BadRequestException {
-        Model model = modelRepository.findById(modelId).orElseThrow(ModelNotFoundException::new);
+        Model model = modelRepository.findById(modelId).filter(m -> !m.isDeleted()).orElseThrow(ModelNotFoundException::new);
 
         if (!user.getUserId().equals(model.getUser().getUserId())) {
             throw new BadRequestException("자신의 모델만 수정할 수 있습니다.");
