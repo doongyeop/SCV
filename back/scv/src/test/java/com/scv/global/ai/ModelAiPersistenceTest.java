@@ -13,6 +13,8 @@ import com.scv.domain.version.repository.ModelVersionRepository;
 import com.scv.domain.version.service.ModelVersionService;
 import com.scv.global.ai.dto.AnalysisResponse;
 import com.scv.global.ai.dto.TrainResponse;
+import com.scv.global.json.JsonCodec;
+import com.scv.global.json.JsonCodecException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -27,11 +29,28 @@ class ModelAiPersistenceTest {
     private final ResultRepository results = mock(ResultRepository.class);
     private final DataRepository datasets = mock(DataRepository.class);
     private final AiModelGateway gateway = mock(AiModelGateway.class);
-    private final ModelVersionService service = new ModelVersionService(models, versions, results, datasets, gateway);
     private final ObjectMapper mapper = new ObjectMapper();
+    private final ModelVersionService service = new ModelVersionService(models, versions, results, datasets, gateway, new JsonCodec(mapper));
     private final Data data = Data.builder().id(1).name(DataSet.MNIST).build();
     private final Model model = Model.builder().id(1L).data(data).latestVersion(0).build();
     private final ModelVersion version = ModelVersion.builder().id(2L).model(model).layers("[]").build();
+
+    @Test
+    void corruptStoredLayersNeverReachAiServer() {
+        version.updateLayers("[] {}");
+        when(versions.findById(2L)).thenReturn(Optional.of(version));
+        when(datasets.findById(1)).thenReturn(Optional.of(data));
+        assertThatThrownBy(() -> service.runResult(2L)).isInstanceOf(JsonCodecException.class);
+        verifyNoInteractions(gateway, results);
+    }
+
+    @Test
+    void detailReturnsParsedLayerList() {
+        when(versions.findById(2L)).thenReturn(Optional.of(version));
+        var detail = service.getModelVersion(2L);
+        assertThat(detail.getModelVersionId()).isEqualTo(2L);
+        assertThat(detail.getLayers()).isEmpty();
+    }
 
     @Test
     void preservesTrainingJsonAndParameterCount() throws Exception {

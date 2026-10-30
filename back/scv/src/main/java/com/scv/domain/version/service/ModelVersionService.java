@@ -27,7 +27,8 @@ import com.scv.domain.version.dto.response.ModelVersionDetailWithResult;
 import com.scv.domain.version.dto.response.ModelVersionOnWorking;
 import com.scv.domain.version.exception.ModelVersionNotFoundException;
 import com.scv.domain.version.repository.ModelVersionRepository;
-import com.scv.global.util.ParsingUtil;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.scv.global.json.JsonCodec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.coyote.BadRequestException;
@@ -49,6 +50,8 @@ public class ModelVersionService {
     private final ResultRepository resultRepository;
     private final DataRepository dataRepository;
     private final AiModelGateway aiModelGateway;
+    private final JsonCodec jsonCodec;
+    private static final TypeReference<List<LayerDTO>> LAYERS_TYPE = new TypeReference<>() {};
 
     // 모델 버전 생성
     public ModelCreateResponse createModelVersion(Long modelId, Long modelVersionId, CustomOAuth2User user) throws BadRequestException {
@@ -73,14 +76,15 @@ public class ModelVersionService {
     @Transactional(readOnly = true)
     public ModelVersionDetail getModelVersion(Long versionId) {
         ModelVersion version = modelVersionRepository.findById(versionId).orElseThrow(ModelVersionNotFoundException::new);
+        List<LayerDTO> layers = jsonCodec.read(version.getLayers(), LAYERS_TYPE);
 
         Optional<Result> result = resultRepository.findById(versionId);
         if (result.isPresent()) {
             ResultResponseWithImages resultResponseWithImages = new ResultResponseWithImages(result.get());
-            return new ModelVersionDetailWithResult(version, resultResponseWithImages);
+            return new ModelVersionDetailWithResult(version.getId(), layers, resultResponseWithImages);
         }
 
-        return new ModelVersionDetail(version);
+        return new ModelVersionDetail(version.getId(), layers);
     }
 
 
@@ -103,7 +107,7 @@ public class ModelVersionService {
             throw new BadRequestException("제작자만 수정할 수 있습니다.");
         }
 
-        String layersJson = ParsingUtil.toJson(request.layers());
+        String layersJson = jsonCodec.write(request.layers());
 
         // 모델 버전 정보 업데이트
         modelVersion.updateLayers(layersJson);
@@ -170,14 +174,14 @@ public class ModelVersionService {
         Data data = dataRepository.findById(modelVersion.getModel().getData().getId())
                 .orElseThrow(DataNotFoundException::new);
 
-        List<LayerDTO> layers = ParsingUtil.parseJsonToList(modelVersion.getLayers(), LayerDTO.class);
+        List<LayerDTO> layers = jsonCodec.read(modelVersion.getLayers(), LAYERS_TYPE);
         ResultRequest request = new ResultRequest(layers, data);
         TrainResponse.TrainingResult training = aiModelGateway.train(modelVersion.getModel().getId(), modelVersionId, request);
         double finalTestAccuracy = training.accuracy();
         double finalTestLoss = training.loss();
-        String codeJson = ParsingUtil.toJson(training.modelCode());
-        String layerParams = ParsingUtil.toJson(training.layerParameters());
-        String trainInfo = ParsingUtil.toJson(Map.of(
+        String codeJson = jsonCodec.write(training.modelCode());
+        String layerParams = jsonCodec.write(training.layerParameters());
+        String trainInfo = jsonCodec.write(Map.of(
                 "train_result_per_epoch", training.resultPerEpoch(),
                 "training_history", training.trainingHistory()));
         int totalParams = training.totalParams();
@@ -215,10 +219,10 @@ public class ModelVersionService {
         AnalysisResponse analysis = aiModelGateway.analyze(modelId, modelVersionId, model.getData().getName());
 
         result.updateAnalysis(
-                ParsingUtil.toJson(analysis.confusionMatrix()),
-                ParsingUtil.toJson(analysis.exampleImage()),
-                ParsingUtil.toJson(analysis.featureActivation()),
-                ParsingUtil.toJson(analysis.activationMaximization())
+                jsonCodec.write(analysis.confusionMatrix()),
+                jsonCodec.write(analysis.exampleImage()),
+                jsonCodec.write(analysis.featureActivation()),
+                jsonCodec.write(analysis.activationMaximization())
         );
         resultRepository.save(result);
 

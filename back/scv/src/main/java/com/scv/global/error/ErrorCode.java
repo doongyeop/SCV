@@ -18,6 +18,7 @@ public enum ErrorCode {
     EXPIRED_TOKEN(403, "EXPIRED_TOKEN", "만료된 토큰입니다."),
     INTERNAL_SERVER_ERROR(500, "INTERNAL_SERVER_ERROR", "서버 오류가 발생했습니다."),
 
+    JSON_PROCESSING_ERROR(500, "JSON_PROCESSING_ERROR", "저장 데이터 변환 중 오류가 발생했습니다."),
     AI_TIMEOUT(504, "AI_TIMEOUT", "AI 서버 응답 시간이 초과되었습니다."),
     AI_UNAVAILABLE(503, "AI_UNAVAILABLE", "AI 서버에 연결할 수 없습니다."),
     AI_REQUEST_FAILED(502, "AI_REQUEST_FAILED", "AI 서버 요청 처리에 실패했습니다."),

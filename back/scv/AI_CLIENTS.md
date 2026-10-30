@@ -19,3 +19,11 @@ AI 응답 시간 초과는 504, 연결 실패는 503, HTTP 오류 및 잘못된 
 벡터 삭제 실패 시 로그를 남기고 DB 삭제를 계속하는 기존 정책은 유지합니다. 트랜잭션 경계 분리와 삭제 재시도는 후속 작업입니다.
 
 회귀 테스트: `gradle test --tests "com.scv.global.ai.*" --no-daemon`
+
+## 저장 JSON 처리
+
+기존 정적 `ParsingUtil`은 `JsonCodec`으로 교체했습니다. Spring ObjectMapper의 복사본을 사용해 등록된 모듈을 유지하며, HTTP 응답 매퍼 설정은 변경하지 않습니다. JSON 문자열/배열의 저장 형식과 알 수 없는 필드 무시 정책은 유지합니다.
+
+빈 입력, JSON null, 잘못된 문법, 뒤에 추가 JSON이 붙은 저장 데이터는 `JSON_PROCESSING_ERROR`(500)로 처리합니다. 빈 레이어 배열 `[]`는 허용합니다. 원본 JSON 및 Jackson 내부 오류는 API 응답에 포함하지 않습니다. 응답 DTO는 이미 파싱된 레이어를 받아 담는 역할만 수행합니다.
+
+JSON 포함 회귀 테스트: `gradle test --tests "com.scv.global.ai.*" --tests "com.scv.global.json.*" --no-daemon`
