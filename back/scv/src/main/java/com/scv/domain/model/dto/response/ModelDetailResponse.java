@@ -31,7 +31,7 @@ public record ModelDetailResponse(
                 model.getLatestVersion(),
                 model.getModelVersions().stream()
                         .sorted(Comparator.comparing(ModelVersion::getVersionNo).reversed())
-                        .filter(modelVersions -> model.isDeleted() == false)
+                        .filter(version -> !version.isDeleted())
                         .map(ModelVersionResponse::new)
                         .collect(Collectors.toList()),
                 model.getCreatedAt(),

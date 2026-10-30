@@ -28,7 +28,8 @@ public class ModelVersionRepositoryImpl implements ModelVersionRepositoryCustom 
                 .leftJoin(modelVersion.result).fetchJoin()
                 .where(
                         modelVersion.model.id.eq(id),
-                        modelVersion.deleted.isFalse()
+                        modelVersion.deleted.isFalse(),
+                        modelVersion.model.deleted.isFalse()
                 )
                 .fetch();
     }
@@ -46,7 +47,8 @@ public class ModelVersionRepositoryImpl implements ModelVersionRepositoryCustom 
                         containsModelName(modelName),
                         containsDataName(dataName),
                         modelVersion.isWorkingOn.isTrue(),
-                        modelVersion.deleted.isFalse()
+                        modelVersion.deleted.isFalse(),
+                        modelVersion.model.deleted.isFalse()
                 )
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize());
@@ -58,12 +60,14 @@ public class ModelVersionRepositoryImpl implements ModelVersionRepositoryCustom 
         JPAQuery<Long> countQuery = queryFactory
                 .select(modelVersion.count())
                 .from(modelVersion)
+                .join(modelVersion.model, model)
                 .where(
                         modelVersion.model.user.userId.eq(userId),
                         containsModelName(modelName),
                         containsDataName(dataName),
                         modelVersion.isWorkingOn.isTrue(),
-                        modelVersion.deleted.isFalse()
+                        modelVersion.deleted.isFalse(),
+                        modelVersion.model.deleted.isFalse()
                 );
 
         return PageableExecutionUtils.getPage(query.fetch(), pageable, countQuery::fetchOne);

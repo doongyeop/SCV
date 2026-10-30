@@ -55,9 +55,9 @@ public class ModelVersionService {
 
     // 모델 버전 생성
     public ModelCreateResponse createModelVersion(Long modelId, Long modelVersionId, CustomOAuth2User user) throws BadRequestException {
-        Model model = modelRepository.findById(modelId).orElseThrow(ModelNotFoundException::new);
-        ModelVersion modelVersion = modelVersionRepository.findById(modelVersionId).orElseThrow(ModelNotFoundException::new);
-        if (user.getUserId() != model.getUser().getUserId()) {
+        Model model = modelRepository.findById(modelId).filter(m -> !m.isDeleted()).orElseThrow(ModelNotFoundException::new);
+        ModelVersion modelVersion = findActiveVersion(modelVersionId);
+        if (!user.getUserId().equals(model.getUser().getUserId())) {
             throw new BadRequestException("모델의 제작자만 생성할 수 있습니다.");
         }
 
@@ -75,10 +75,10 @@ public class ModelVersionService {
     // 모델버전 상세 조회
     @Transactional(readOnly = true)
     public ModelVersionDetail getModelVersion(Long versionId) {
-        ModelVersion version = modelVersionRepository.findById(versionId).orElseThrow(ModelVersionNotFoundException::new);
+        ModelVersion version = findActiveVersion(versionId);
         List<LayerDTO> layers = jsonCodec.read(version.getLayers(), LAYERS_TYPE);
 
-        Optional<Result> result = resultRepository.findById(versionId);
+        Optional<Result> result = resultRepository.findByIdAndDeletedFalse(versionId);
         if (result.isPresent()) {
             ResultResponseWithImages resultResponseWithImages = new ResultResponseWithImages(result.get());
             return new ModelVersionDetailWithResult(version.getId(), layers, resultResponseWithImages);
@@ -99,11 +99,10 @@ public class ModelVersionService {
 
     // 모델 버전 수정
     public void updateModelVersion(Long modelVersionId, ModelVersionRequest request, CustomOAuth2User user) throws BadRequestException {
-        ModelVersion modelVersion = modelVersionRepository.findById(modelVersionId)
-                .orElseThrow(ModelVersionNotFoundException::new);
+        ModelVersion modelVersion = findActiveVersion(modelVersionId);
 
         // 사용자 권한 검사
-        if (user.getUserId() != modelVersion.getModel().getUser().getUserId()) {
+        if (!user.getUserId().equals(modelVersion.getModel().getUser().getUserId())) {
             throw new BadRequestException("제작자만 수정할 수 있습니다.");
         }
 
@@ -119,15 +118,14 @@ public class ModelVersionService {
 
     // 모델 버전 삭제
     public void deleteModelVersion(Long modelVersionId, CustomOAuth2User user) throws BadRequestException {
-        ModelVersion modelVersion = modelVersionRepository.findById(modelVersionId)
-                .orElseThrow(ModelVersionNotFoundException::new);
+        ModelVersion modelVersion = findActiveVersion(modelVersionId);
         if (!user.getUserId().equals(modelVersion.getModel().getUser().getUserId())) {
             throw new BadRequestException("제작자만 삭제할 수 있습니다.");
         }
 
         Model model = modelVersion.getModel();
 
-        modelVersionRepository.softDeleteById(modelVersionId);
+        modelVersion.delete();
         /**
          * 벡터 DB 삭제 로직
          */
@@ -143,34 +141,24 @@ public class ModelVersionService {
 
         // Result가 존재하는 경우에만 소프트 삭제
         Optional<Result> result = resultRepository.findByIdAndDeletedFalse(modelVersionId);
-        result.ifPresent(r -> resultRepository.softDeleteByModelVersionId(modelVersionId));
+        result.ifPresent(Result::delete);
 
         // 버전, 정확도관리
-        if (model.getLatestVersion() != 0) {
-            List<ModelVersion> modelVersionList = modelVersionRepository.findAllByModelIdAndDeletedFalse(model.getId());
-            modelVersionList.sort(Comparator.comparingInt(ModelVersion::getVersionNo).reversed());
+        Optional<ModelVersion> latestCompleted = modelVersionRepository
+                .findAllByModelIdAndDeletedFalse(model.getId()).stream()
+                .filter(version -> !version.isDeleted())
+                .filter(version -> version.getVersionNo() > 0 && !version.isWorkingOn())
+                .filter(version -> version.getResult() != null && !version.getResult().isDeleted())
+                .max(Comparator.comparingInt(ModelVersion::getVersionNo));
 
-            if (!modelVersionList.isEmpty()) {
-                for (int i = 0; i < modelVersionList.size(); i++) {
-                    if (modelVersionList.get(i).getResult() != null) {
-                        model.setAccuracy(modelVersionList.get(i).getResult().getTestAccuracy());
-                        model.setLatestVersion(modelVersionList.get(i).getVersionNo());
-                        break;
-                    }
-                }
-            } else {
-                model.setLatestVersion(0);
-                model.setAccuracy(-1.0);
-            }
-        }
-        modelVersionRepository.save(modelVersion);
+        model.setLatestVersion(latestCompleted.map(ModelVersion::getVersionNo).orElse(0));
+        model.setAccuracy(latestCompleted.map(version -> version.getResult().getTestAccuracy()).orElse(-1.0));
     }
 
 
     // 모델 실행 및 저장
     public ResultResponse runResult(Long modelVersionId) {
-        ModelVersion modelVersion = modelVersionRepository.findById(modelVersionId)
-                .orElseThrow(ModelVersionNotFoundException::new);
+        ModelVersion modelVersion = findActiveVersion(modelVersionId);
         Data data = dataRepository.findById(modelVersion.getModel().getData().getId())
                 .orElseThrow(DataNotFoundException::new);
 
@@ -211,9 +199,8 @@ public class ModelVersionService {
 
     // 결과 및 분석 저장
     public ResultResponseWithImages saveResult(Long modelVersionId) {
-        ModelVersion modelVersion = modelVersionRepository.findById(modelVersionId)
-                .orElseThrow(ModelVersionNotFoundException::new);
-        Result result = resultRepository.findById(modelVersionId).orElseThrow(ResultNotFoundException::new);
+        ModelVersion modelVersion = findActiveVersion(modelVersionId);
+        Result result = resultRepository.findByIdAndDeletedFalse(modelVersionId).orElseThrow(ResultNotFoundException::new);
         Model model = modelVersion.getModel();
         Long modelId = model.getId();
         AnalysisResponse analysis = aiModelGateway.analyze(modelId, modelVersionId, model.getData().getName());
@@ -250,5 +237,11 @@ public class ModelVersionService {
         return new ResultResponseWithImages(result);
     }
 
+
+    private ModelVersion findActiveVersion(Long versionId) {
+        return modelVersionRepository.findById(versionId)
+                .filter(version -> !version.isDeleted() && !version.getModel().isDeleted())
+                .orElseThrow(ModelVersionNotFoundException::new);
+    }
 
 }

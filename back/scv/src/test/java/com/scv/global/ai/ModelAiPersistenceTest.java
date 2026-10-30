@@ -80,7 +80,7 @@ class ModelAiPersistenceTest {
     void preservesImageStringAndArrayStorageFormat() throws Exception {
         Result result = Result.builder().id(2L).modelVersion(version).testAccuracy(0.9).testLoss(0.1).build();
         when(versions.findById(2L)).thenReturn(Optional.of(version));
-        when(results.findById(2L)).thenReturn(Optional.of(result));
+        when(results.findByIdAndDeletedFalse(2L)).thenReturn(Optional.of(result));
         when(gateway.analyze(1L, 2L, DataSet.MNIST)).thenReturn(new AnalysisResponse(
                 "model_1_v2", "matrix", "image", mapper.readTree("[]"), mapper.readTree("[]")));
         service.saveResult(2L);
