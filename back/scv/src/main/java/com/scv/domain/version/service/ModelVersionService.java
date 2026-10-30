@@ -1,8 +1,9 @@
 package com.scv.domain.version.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.scv.global.ai.AiModelGateway;
+import com.scv.global.ai.AiServiceException;
+import com.scv.global.ai.dto.AnalysisResponse;
+import com.scv.global.ai.dto.TrainResponse;
 import com.scv.domain.data.domain.Data;
 import com.scv.domain.data.enums.DataSet;
 import com.scv.domain.data.exception.DataNotFoundException;
@@ -11,7 +12,6 @@ import com.scv.domain.model.domain.Model;
 import com.scv.domain.model.dto.response.ModelCreateResponse;
 import com.scv.domain.model.exception.ModelNotFoundException;
 import com.scv.domain.model.repository.ModelRepository;
-import com.scv.global.util.UrlUtil;
 import com.scv.global.oauth2.auth.CustomOAuth2User;
 import com.scv.domain.result.domain.Result;
 import com.scv.domain.result.dto.request.ResultRequest;
@@ -33,13 +33,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.coyote.BadRequestException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
 
@@ -53,7 +48,7 @@ public class ModelVersionService {
     private final ModelVersionRepository modelVersionRepository;
     private final ResultRepository resultRepository;
     private final DataRepository dataRepository;
-    private final UrlUtil urlUtil;
+    private final AiModelGateway aiModelGateway;
 
     // 모델 버전 생성
     public ModelCreateResponse createModelVersion(Long modelId, Long modelVersionId, CustomOAuth2User user) throws BadRequestException {
@@ -132,12 +127,10 @@ public class ModelVersionService {
         /**
          * 벡터 DB 삭제 로직
          */
-        String url = String.format("http://fast-search-service.scv.svc.cluster.local:8001/fast/v1/model/match/%d/%d", model.getId(), modelVersionId);
-        RestTemplate restTemplate = new RestTemplate();
         try {
-            restTemplate.delete(url);
+            aiModelGateway.delete(model.getId(), modelVersionId);
             log.info("vectorDB 삭제 성공");
-        } catch (RestClientException e) {
+        } catch (AiServiceException e) {
             log.error("vectorDB 삭제 실패: model_{}_v{}", model.getId(), modelVersionId);
         }
         /**
@@ -179,30 +172,15 @@ public class ModelVersionService {
 
         List<LayerDTO> layers = ParsingUtil.parseJsonToList(modelVersion.getLayers(), LayerDTO.class);
         ResultRequest request = new ResultRequest(layers, data);
-        String url = urlUtil.getTrainUrl(modelVersion.getModel().getId(), modelVersionId);
-
-        RestTemplate restTemplate = new RestTemplate();
-        ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
-        String jsonResponse = response.getBody();
-
-        JsonNode rootNode = ParsingUtil.parseJsonToNode(jsonResponse);
-        JsonNode testResults = rootNode.path("test_results").path("results");
-
-        double finalTestAccuracy = testResults.path("final_test_accuracy").asDouble(0.0);
-        double finalTestLoss = testResults.path("final_test_loss").asDouble(0.0);
-
-        String modelCode = testResults.path("model_code").asText();
-        String codeJson = ParsingUtil.toJson(modelCode);
-
-        String layerParams = ParsingUtil.toJson(testResults.path("layer_parameters"));
-
-        ObjectNode trainInfoNode = new ObjectMapper().createObjectNode();
-        trainInfoNode.set("train_result_per_epoch", testResults.path("train_result_per_epoch"));
-        trainInfoNode.set("training_history", testResults.path("training_history"));
-
-        String trainInfo = trainInfoNode.toString();
-
-        int totalParams = calculateTotalParams(testResults.path("layer_parameters"));
+        TrainResponse.TrainingResult training = aiModelGateway.train(modelVersion.getModel().getId(), modelVersionId, request);
+        double finalTestAccuracy = training.accuracy();
+        double finalTestLoss = training.loss();
+        String codeJson = ParsingUtil.toJson(training.modelCode());
+        String layerParams = ParsingUtil.toJson(training.layerParameters());
+        String trainInfo = ParsingUtil.toJson(Map.of(
+                "train_result_per_epoch", training.resultPerEpoch(),
+                "training_history", training.trainingHistory()));
+        int totalParams = training.totalParams();
 
         Optional<Result> existingResult = resultRepository.findByIdWithLock(modelVersionId);
         Result result;
@@ -234,28 +212,13 @@ public class ModelVersionService {
         Result result = resultRepository.findById(modelVersionId).orElseThrow(ResultNotFoundException::new);
         Model model = modelVersion.getModel();
         Long modelId = model.getId();
-        String data = model.getData().getName().toString();
-        if ("Fashion".equals(data)) {
-            data += "_MNIST";
-        }
-
-        String url = urlUtil.getTestUrl(modelId, modelVersionId, data);
-
-        RestTemplate restTemplate = new RestTemplate();
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-        String jsonResponse = response.getBody();
-
-        JsonNode rootNode = ParsingUtil.parseJson(jsonResponse, JsonNode.class);
+        AnalysisResponse analysis = aiModelGateway.analyze(modelId, modelVersionId, model.getData().getName());
 
         result.updateAnalysis(
-                ParsingUtil.getJsonFieldAsString(rootNode, "confusion_matrix"),
-                ParsingUtil.getJsonFieldAsString(rootNode, "example_image"),
-                ParsingUtil.getJsonFieldAsString(rootNode, "feature_activation"),
-                ParsingUtil.getJsonFieldAsString(rootNode, "activation_maximization")
+                ParsingUtil.toJson(analysis.confusionMatrix()),
+                ParsingUtil.toJson(analysis.exampleImage()),
+                ParsingUtil.toJson(analysis.featureActivation()),
+                ParsingUtil.toJson(analysis.activationMaximization())
         );
         resultRepository.save(result);
 
@@ -284,11 +247,4 @@ public class ModelVersionService {
     }
 
 
-    private int calculateTotalParams(JsonNode layerParameters) {
-        int totalParams = 0;
-        for (JsonNode paramNode : layerParameters) {
-            totalParams += paramNode.asInt();
-        }
-        return totalParams;
-    }
 }

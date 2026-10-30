@@ -70,12 +70,20 @@ spring:
           password: ${REDIS_OAUTH_MASTER_PASSWORD}
 
   fastapi:
+    connect-timeout: ${FAST_CONNECT_TIMEOUT:5s}
     train:
       host: ${FAST_MODEL_TRAIN_HOST_NAME}
       port: ${FAST_MODEL_TRAIN_PORT}
+      base-url: ${FAST_MODEL_TRAIN_BASE_URL:http://${spring.fastapi.train.host}:${spring.fastapi.train.port}}
+      read-timeout: ${FAST_MODEL_TRAIN_READ_TIMEOUT:30m}
     test:
       host: ${FAST_MODEL_TEST_HOST_NAME}
       port: ${FAST_MODEL_TEST_PORT}
+      base-url: ${FAST_MODEL_TEST_BASE_URL:http://${spring.fastapi.test.host}:${spring.fastapi.test.port}}
+      read-timeout: ${FAST_MODEL_TEST_READ_TIMEOUT:5m}
+    search:
+      base-url: ${FAST_MODEL_SEARCH_BASE_URL:http://fast-search-service.scv.svc.cluster.local:8001}
+      read-timeout: ${FAST_MODEL_SEARCH_READ_TIMEOUT:10s}
 
 # actuator health 체크 설정
 management:
